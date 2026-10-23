@@ -1,0 +1,91 @@
+name: build
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed to attach cxps5.elf to a release on tags
+
+env:
+  PS5_PAYLOAD_SDK: /opt/ps5-payload-sdk
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld zlib1g-dev python3 zip curl unzip
+
+      # Host build + API tests against a fake game folder (no console needed).
+      - name: Host tests
+        run: make test
+
+      # Prebuilt SDK release; falls back to building the SDK from source if the download fails.
+      - name: Install ps5-payload-sdk
+        run: |
+          set -x
+          if curl -fL --retry 3 -o sdk.zip \
+              https://github.com/ps5-payload-dev/sdk/releases/latest/download/ps5-payload-sdk.zip; then
+            sudo unzip -q -o -d /opt sdk.zip
+          else
+            git clone --depth 1 https://github.com/ps5-payload-dev/sdk
+            sudo mkdir -p "$PS5_PAYLOAD_SDK"
+            make -C sdk DESTDIR=/opt clean install || sudo make -C sdk DESTDIR=/opt clean install
+          fi
+          test -x "$PS5_PAYLOAD_SDK/bin/prospero-clang" || { ls -R /opt | head -50; exit 1; }
+          echo "$PS5_PAYLOAD_SDK/bin" >> "$GITHUB_PATH"
+
+      # Optional: libcurl/openssl ports (pacbrew). If this fails the build continues without link downloads.
+      - name: Install curl/openssl ports (optional)
+        continue-on-error: true
+        run: |
+          set -x
+          git clone --depth 1 https://github.com/ps5-payload-dev/pacbrew-repo
+          cd pacbrew-repo
+          ls
+          for p in zlib zstd libpsl openssl curl; do
+            (cd "$p" 2>/dev/null && makepkg -f --noconfirm --nodeps && \
+              sudo pacbrew-pacman -U --noconfirm *.pkg.tar.gz) || echo "port $p failed"
+          done
+
+      - name: Build cxps5.elf
+        run: |
+          if [ -f "$PS5_PAYLOAD_SDK/target/user/homebrew/include/curl/curl.h" ]; then
+            make
+          else
+            echo "::warning::No curl port in SDK, building with NO_CURL=1 (upload only, no link downloads)"
+            make NO_CURL=1
+          fi
+          ls -l cxps5.elf
+          file cxps5.elf
+
+      - name: Package
+        run: |
+          mkdir -p dist
+          cp cxps5.elf config.ini.example README.md dist/
+          sh scripts/package.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cxps5
+          path: |
+            dist/cxps5.elf
+            dist/config.ini.example
+            dist/cxps5-*-src.zip
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/cxps5.elf
+            dist/config.ini.example
+            dist/cxps5-*-src.zip
