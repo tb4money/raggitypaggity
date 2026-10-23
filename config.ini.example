@@ -1,0 +1,14 @@
+# Copy to /data/cxps5/config.ini on the console. Every key is optional.
+
+# Web UI port: open http://<PS5 IP>:8090 on your phone or PC.
+port = 8090
+
+# Only needed if auto-detect can't find CarX Street. Folder that contains sce_sys/ and the game data,
+# e.g. /data/homebrew/PPSA12345 or /mnt/ext0/games/PPSA12345
+game_root =
+
+# Lock the web UI (and every API call) with a PIN.
+pin =
+
+# JSON catalog the Browse tab reads: {"items":[{"name":"","author":"","url":"https://…/car.zip","file":"","note":""}]}
+catalog_url =
